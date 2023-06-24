@@ -222,6 +222,6 @@ class Program
     static void SaveGoals()
     {
         // Save goals to a file or database for future use
-        // Implement your save logic here
+        // Implement save logic here
     }
 }
