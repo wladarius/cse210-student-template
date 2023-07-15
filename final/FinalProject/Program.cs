@@ -1,15 +1,17 @@
 using System;
 using System.Collections.Generic;
+using System.ComponentModel.DataAnnotations;
+using Microsoft.EntityFrameworkCore;
 
 namespace PersonalFinanceManager
 {
     public class Transaction
     {
+        public int Id { get; set; }
         public decimal Amount { get; set; }
         public string Category { get; set; }
         public TransactionType Type { get; set; }
-
-         public DateTime Date { get; set; }
+        public DateTime Date { get; set; }
     }
 
     public enum TransactionType
@@ -20,78 +22,25 @@ namespace PersonalFinanceManager
 
     public class User
     {
+        public int Id { get; set; }
         public string Name { get; set; }
         public List<Transaction> Transactions { get; set; }
 
-        public User(string name)
+        public User()
         {
-            Name = name;
             Transactions = new List<Transaction>();
         }
+    }
 
-        public void AddTransaction(decimal amount, string category, TransactionType type)
+    public class AppDbContext : DbContext
+    {
+        public DbSet<User> Users { get; set; }
+        public DbSet<Transaction> Transactions { get; set; }
+
+        protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
         {
-            var transaction = new Transaction
-            {
-                Amount = amount,
-                Category = category,
-                Type = type,
-                Date = DateTime.Now 
-            };
-
-            Transactions.Add(transaction);
-        }
-
-        public decimal CalculateTotalExpenses()
-        {
-            decimal totalExpenses = 0;
-
-            foreach (var transaction in Transactions)
-            {
-                if (transaction.Type == TransactionType.Expense)
-                {
-                    totalExpenses += transaction.Amount;
-                }
-            }
-
-            return totalExpenses;
-        }
-
-        public decimal CalculateTotalIncome()
-        {
-            decimal totalIncome = 0;
-
-            foreach (var transaction in Transactions)
-            {
-                if (transaction.Type == TransactionType.Income)
-                {
-                    totalIncome += transaction.Amount;
-                }
-            }
-
-            return totalIncome;
-        }
-
-        public Dictionary<string, decimal> CalculateExpensesByCategory()
-        {
-            var expensesByCategory = new Dictionary<string, decimal>();
-
-            foreach (var transaction in Transactions)
-            {
-                if (transaction.Type == TransactionType.Expense)
-                {
-                    if (expensesByCategory.ContainsKey(transaction.Category))
-                    {
-                        expensesByCategory[transaction.Category] += transaction.Amount;
-                    }
-                    else
-                    {
-                        expensesByCategory.Add(transaction.Category, transaction.Amount);
-                    }
-                }
-            }
-
-            return expensesByCategory;
+            // Configure your SQL Server connection here
+            optionsBuilder.UseSqlServer("Server=localhost;Database=PersonalFinanceManager;Trusted_Connection=True;");
         }
     }
 
@@ -106,7 +55,17 @@ namespace PersonalFinanceManager
             Console.Write("Please enter your name: ");
             string userName = Console.ReadLine();
 
-            CurrentUser = new User(userName);
+            using (var context = new AppDbContext())
+            {
+                var user = context.Users.FirstOrDefault(u => u.Name == userName);
+                if (user == null)
+                {
+                    user = new User { Name = userName };
+                    context.Users.Add(user);
+                    context.SaveChanges();
+                }
+                CurrentUser = user;
+            }
 
             bool running = true;
             while (running)
@@ -180,17 +139,55 @@ namespace PersonalFinanceManager
             Console.Write("Enter the category: ");
             string category = Console.ReadLine();
 
-            CurrentUser.AddTransaction(amount, category, transactionType);
+            var transaction = new Transaction
+            {
+                Amount = amount,
+                Category = category,
+                Type = transactionType,
+                Date = DateTime.Now
+            };
+
+            using (var context = new AppDbContext())
+            {
+                var user = context.Users.Include(u => u.Transactions).FirstOrDefault(u => u.Id == CurrentUser.Id);
+                if (user != null)
+                {
+                    user.Transactions.Add(transaction);
+                    context.SaveChanges();
+                }
+            }
 
             Console.WriteLine("Transaction added successfully!");
         }
 
         private void ViewFinancialStatus()
         {
-            Console.WriteLine();
-            Console.WriteLine("Financial Status:");
-            Console.WriteLine("Total Expenses: $" + CurrentUser.CalculateTotalExpenses());
-            Console.WriteLine("Total Income: $" + CurrentUser.CalculateTotalIncome());
+            using (var context = new AppDbContext())
+            {
+                var user = context.Users.Include(u => u.Transactions).FirstOrDefault(u => u.Id == CurrentUser.Id);
+                if (user != null)
+                {
+                    decimal totalExpenses = 0;
+                    decimal totalIncome = 0;
+
+                    foreach (var transaction in user.Transactions)
+                    {
+                        if (transaction.Type == TransactionType.Expense)
+                        {
+                            totalExpenses += transaction.Amount;
+                        }
+                        else if (transaction.Type == TransactionType.Income)
+                        {
+                            totalIncome += transaction.Amount;
+                        }
+                    }
+
+                    Console.WriteLine();
+                    Console.WriteLine("Financial Status:");
+                    Console.WriteLine("Total Expenses: $" + totalExpenses);
+                    Console.WriteLine("Total Income: $" + totalIncome);
+                }
+            }
         }
 
         private void GenerateReports()
@@ -218,49 +215,77 @@ namespace PersonalFinanceManager
 
         private void GenerateMonthlyExpenseSummary()
         {
-            Console.WriteLine("Monthly Expense Summary:");
-
-            // Get the current month and year
-            DateTime currentDate = DateTime.Now;
-            int currentMonth = currentDate.Month;
-            int currentYear = currentDate.Year;
-
-            // Filter transactions for the current month and year
-            List<Transaction> monthlyTransactions = CurrentUser.Transactions.FindAll(
-                t => t.Type == TransactionType.Expense &&
-                t.Date.Month == currentMonth &&
-                t.Date.Year == currentYear
-            );
-
-            decimal totalExpenses = 0 ;
-
-            foreach (var transaction in monthlyTransactions)
+            using (var context = new AppDbContext())
             {
-                totalExpenses += transaction.Amount;
-            }
+                var user = context.Users.Include(u => u.Transactions).FirstOrDefault(u => u.Id == CurrentUser.Id);
+                if (user != null)
+                {
+                    Console.WriteLine("Monthly Expense Summary:");
 
-            Console.WriteLine($"Total Expenses for {currentMonth}/{currentYear}: ${totalExpenses}");
+                    // Get the current month and year
+                    DateTime currentDate = DateTime.Now;
+                    int currentMonth = currentDate.Month;
+                    int currentYear = currentDate.Year;
+
+                    decimal totalExpenses = 0;
+
+                    foreach (var transaction in user.Transactions)
+                    {
+                        if (transaction.Type == TransactionType.Expense && transaction.Date.Month == currentMonth && transaction.Date.Year == currentYear)
+                        {
+                            totalExpenses += transaction.Amount;
+                        }
+                    }
+
+                    Console.WriteLine($"Total Expenses for {currentMonth}/{currentYear}: ${totalExpenses}");
+                }
+            }
         }
 
         private void GenerateCategoryWiseSpendingTrends()
         {
-            Console.WriteLine("Category-wise Spending Trends:");
-
-            // Gather expenses by category
-            Dictionary<string, decimal> expensesByCategory = CurrentUser.CalculateExpensesByCategory();
-
-            foreach (var category in expensesByCategory)
+            using (var context = new AppDbContext())
             {
-                Console.WriteLine($"{category.Key}: ${category.Value}");
+                var user = context.Users.Include(u => u.Transactions).FirstOrDefault(u => u.Id == CurrentUser.Id);
+                if (user != null)
+                {
+                    Console.WriteLine("Category-wise Spending Trends:");
+
+                    var expensesByCategory = new Dictionary<string, decimal>();
+
+                    foreach (var transaction in user.Transactions)
+                    {
+                        if (transaction.Type == TransactionType.Expense)
+                        {
+                            if (expensesByCategory.ContainsKey(transaction.Category))
+                            {
+                                expensesByCategory[transaction.Category] += transaction.Amount;
+                            }
+                            else
+                            {
+                                expensesByCategory.Add(transaction.Category, transaction.Amount);
+                            }
+                        }
+                    }
+
+                    foreach (var category in expensesByCategory)
+                    {
+                        Console.WriteLine($"{category.Key}: ${category.Value}");
+                    }
+                }
             }
         }
-
     }
 
     public class Program
     {
         public static void Main(string[] args)
         {
+            using (var context = new AppDbContext())
+            {
+                context.Database.EnsureCreated();
+            }
+
             PersonalFinanceApp app = new PersonalFinanceApp();
             app.Start();
         }
